@@ -1,7 +1,6 @@
 ## Work In Progress
 
-# portal-actor
-Portal Actor for UE4
+# Portal Actor for UE4
 
 A C++ based Actor which implements basic portals mechanics:
 
