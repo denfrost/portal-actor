@@ -111,7 +111,11 @@ void APortal::UpdateCapture() {
 		ExitArrow->SetWorldTransform(TeleportTransform);
 	}
 
-	// TODO: set clip plane
+	// set clip plane
+	// !!! This requires to enable global clip option in the project's settings
+	TargetCapture->ClipPlaneNormal = Target->GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector());
+	TargetCapture->ClipPlaneBase = Target->GetActorLocation();
+	TargetCapture->bEnableClipPlane = true;
 }
 
 void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult) {
