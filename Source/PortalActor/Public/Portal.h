@@ -60,5 +60,6 @@ private:
 	TSet<AActor*> TeleportedActors;
 	TSet<AActor*> ReceivedActors;
 
+	UPROPERTY(EditAnywhere, Category = "Portal")
 	bool bDebug = false;
 };

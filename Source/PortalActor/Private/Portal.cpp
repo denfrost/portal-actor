@@ -2,7 +2,6 @@
 
 #include "PortalActor.h"
 #include "Components/SceneCaptureComponent2D.h"
-#include "Components/ArrowComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "DrawDebugHelpers.h"
 #include "Portal.h"
@@ -30,26 +29,11 @@ APortal::APortal() {
 	Overlap->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
 	Overlap->bGenerateOverlapEvents = true;
 	Overlap->SetCollisionProfileName(FName("Portal"));
-
-	FaceArrow = CreateDefaultSubobject<UArrowComponent>(FName("FaceArrow"));
-	FaceArrow->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
-	FaceArrow->SetRelativeLocation(FVector(0, 0, 0));
-	auto PortalFaceRotation = GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector()).Rotation();
-	FaceArrow->SetWorldRotation(PortalFaceRotation);
-
-	ExitArrow = CreateDefaultSubobject<UArrowComponent>(FName("ExitArrow"));
-	ExitArrow->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepWorld, true));
 }
 
 // Called when the game starts or when spawned
 void APortal::BeginPlay() {
 	Super::BeginPlay();
-
-	if (bDebug) {
-		FaceArrow->SetHiddenInGame(false);
-		ExitArrow->SetHiddenInGame(false);
-	}
-	ExitArrow->SetArrowColor_New(FColor::Blue);
 
 	Overlap->OnComponentBeginOverlap.AddDynamic(this, &APortal::OnOverlapBegin);
 
@@ -116,7 +100,9 @@ void APortal::UpdateCapture() {
 
 	if (bDebug) {
 		DrawDebugSphere(GetWorld(), CaptureLocation, 10, 32, FColor::Blue, false);
-		ExitArrow->SetWorldLocationAndRotation(CaptureLocation, CaptureRotation);
+		DrawDebugDirectionalArrow(GetWorld(), CaptureLocation, CaptureLocation + CaptureRotation.Vector() * 200, 20, FColor::Blue);
+		DrawDebugDirectionalArrow(GetWorld(), GetActorLocation(), GetActorLocation() + GetActorUpVector() * 300, 20, FColor::Green);
+		DrawDebugDirectionalArrow(GetWorld(), GetActorLocation(), GetActorLocation() + GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector()) * 100, 20, FColor::Red);
 	}
 
 	// set clip plane
