@@ -4,6 +4,7 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/ArrowComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "DrawDebugHelpers.h"
 #include "Portal.h"
 
 
@@ -89,26 +90,33 @@ void APortal::UpdateCapture() {
 	if (!Target) {
 		return;
 	}
+	
+	auto PlayerCamera = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
 
-	FVector TargetLocation = Target->GetActorLocation();
-	FRotator TargetRotation = Target->GetActorRotation();
+	auto PortalVector = GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector());
+	auto CameraVector = PlayerCamera->GetActorForwardVector();
 
-	FVector PortalLocation = GetActorLocation();
-	FRotator PortalRotation = GetActorRotation();
-
-	FRotator DeltaRotation = FRotator(TargetRotation.Pitch, TargetRotation.Yaw - 180, TargetRotation.Roll) - PortalRotation;
+	auto TargetVector = Target->GetActorForwardVector().RotateAngleAxis(180, Target->GetActorUpVector());
+	auto DeltaRotation = TargetVector.Rotation() - PortalVector.Rotation();
 	DeltaRotation.Normalize();
 
-	auto PlayerCameraTransform = GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetTransformComponent();
+	auto CameraRotation = CameraVector.Rotation();
+	CameraRotation.Normalize();
 
-	FVector NewLocation = TargetLocation - DeltaRotation.RotateVector(PortalLocation) + DeltaRotation.RotateVector(PlayerCameraTransform->GetComponentLocation());
-	FRotator NewRotation = FRotator(FQuat(DeltaRotation)*FQuat(PlayerCameraTransform->GetComponentRotation()));
+	auto CaptureRotation = (DeltaRotation + CameraRotation).Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation();
 
-	TargetCapture->SetWorldLocationAndRotation(NewLocation, NewRotation);
+	auto CameraLocation = PlayerCamera->GetCameraLocation();
+	auto PortalLocation = GetActorLocation();
+	auto TargetLocation = Target->GetActorLocation();
+	auto DeltaLocation = PortalLocation - CameraLocation;
+
+	FVector CaptureLocation = TargetLocation - DeltaRotation.Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation().RotateVector(DeltaLocation);
+
+	TargetCapture->SetWorldLocationAndRotation(CaptureLocation, CaptureRotation);
 
 	if (bDebug) {
-		auto TeleportTransform = GetTeleportTransform(GetWorld()->GetFirstPlayerController()->GetPawn());
-		ExitArrow->SetWorldTransform(TeleportTransform);
+		DrawDebugSphere(GetWorld(), CaptureLocation, 10, 32, FColor::Blue, false);
+		ExitArrow->SetWorldLocationAndRotation(CaptureLocation, CaptureRotation);
 	}
 
 	// set clip plane
@@ -129,7 +137,7 @@ void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* O
 	Teleport(OtherActor);
 }
 
-FTransform APortal::GetTeleportTransform(AActor* Actor) {
+FTransform APortal::GetTeleportTransform(AActor* Actor) const {
 	// Adjust relative rotation
 	auto PortalRotation = GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector()).Rotation();
 	auto TargetRotation = Target->GetActorForwardVector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation();
@@ -148,7 +156,7 @@ FTransform APortal::GetTeleportTransform(AActor* Actor) {
 	auto DiffVector = Actor->GetActorLocation() - GetActorLocation();
 
 	// TODO: fix teleportation when rotating not around Z axis
-	return FTransform((TargetRotation + DiffRotation).Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation(), Target->GetActorLocation() + DiffTargetRotation.RotateVector(DiffVector));;
+	return FTransform((TargetRotation + DiffRotation).Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation(), Target->GetActorLocation() + DiffTargetRotation.RotateVector(DiffVector));
 }
 
 void APortal::Teleport(AActor* Actor) {

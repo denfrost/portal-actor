@@ -50,7 +50,7 @@ private:
 	UFUNCTION()
 	void OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult);
 
-	FTransform GetTeleportTransform(AActor* Actor);
+	FTransform GetTeleportTransform(AActor* Actor) const;
 
 	void Teleport(AActor* Actor);
 	void TeleportReceived(AActor* ReceivedActor);
