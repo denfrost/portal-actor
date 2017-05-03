@@ -4,6 +4,7 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "DrawDebugHelpers.h"
+#include "Components/ArrowComponent.h"
 #include "Portal.h"
 
 
@@ -21,6 +22,7 @@ APortal::APortal() {
 
 	TargetCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(FName("TargetCapture"));
 	TargetCapture->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepWorld, true));
+	TargetCapture->bEnableClipPlane = true;
 
 	TeleportedActors = TSet<AActor*>();
 	ReceivedActors = TSet<AActor*>();
@@ -70,46 +72,69 @@ void APortal::Tick(float DeltaTime) {
 	UpdateCapture();
 }
 
+FVector APortal::GetPortalCenter() const {
+	return Portal->GetComponentLocation();
+}
+
+bool APortal::CheckNeedToUpdate() {
+	auto CameraLocation = GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetTransformComponent()->GetComponentLocation();
+	auto RelativeLocation = CameraLocation - GetActorLocation();
+	
+	auto result = FVector::DotProduct(RelativeLocation, GetActorForwardVector());
+
+	if (result >= 0) {
+		return true;
+	}
+
+	return false;
+}
+
+// Big thanks to Redbox for this algorithm:
+// https://wiki.unrealengine.com/Simple_Portals
 void APortal::UpdateCapture() {
 	if (!Target) {
 		return;
 	}
-	
+
+	if (!CheckNeedToUpdate()) {
+		return;
+	}
+
 	auto PlayerCamera = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	FTransform CameraTransform = PlayerCamera->GetTransformComponent()->GetComponentTransform();
+	FTransform SourceTransform = GetActorTransform();
+	FTransform TargetTransform = Target->GetActorTransform();
 
-	auto PortalVector = GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector());
-	auto CameraVector = PlayerCamera->GetActorForwardVector();
+	FVector SourceScale = SourceTransform.GetScale3D();
+	FVector InverseScale = FVector(SourceScale.X * -1, SourceScale.Y * -1, SourceScale.Z);
+	FTransform InverseTransform = FTransform(SourceTransform.Rotator(), SourceTransform.GetLocation(), InverseScale);
 
-	auto TargetVector = Target->GetActorForwardVector().RotateAngleAxis(180, Target->GetActorUpVector());
-	auto DeltaRotation = TargetVector.Rotation() - PortalVector.Rotation();
-	DeltaRotation.Normalize();
+	FVector CaptureLocation = TargetTransform.TransformPosition(InverseTransform.InverseTransformPosition(CameraTransform.GetLocation()));
 
-	auto CameraRotation = CameraVector.Rotation();
-	CameraRotation.Normalize();
+	FRotationMatrix R = FRotationMatrix(CameraTransform.Rotator());
+	FVector OUT_X;
+	FVector OUT_Y;
+	FVector OUT_Z;
+	R.GetScaledAxes(OUT_X, OUT_Y, OUT_Z);
+	
+	auto SourceByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_Y), FVector(1, 0, 0));
+	auto SourceByXY = FMath::GetReflectionVector(SourceByX, FVector(0, 1, 0));
 
-	auto CaptureRotation = (DeltaRotation + CameraRotation).Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation();
+	auto DirectionY = TargetTransform.TransformVector(SourceByXY);
 
-	auto CameraLocation = PlayerCamera->GetCameraLocation();
-	auto PortalLocation = GetActorLocation();
-	auto TargetLocation = Target->GetActorLocation();
-	auto DeltaLocation = PortalLocation - CameraLocation;
+	auto TargetByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_X), FVector(1, 0, 0));
+	auto TargetByXY = FMath::GetReflectionVector(TargetByX, FVector(0, 1, 0));
 
-	FVector CaptureLocation = TargetLocation - DeltaRotation.Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation().RotateVector(DeltaLocation);
+	auto DirectionX = TargetTransform.TransformVector(TargetByXY);
+
+	auto CaptureRotation = FRotationMatrix::MakeFromXY(DirectionX, DirectionY).Rotator();
 
 	TargetCapture->SetWorldLocationAndRotation(CaptureLocation, CaptureRotation);
 
-	if (bDebug) {
-		DrawDebugSphere(GetWorld(), CaptureLocation, 10, 32, FColor::Blue, false);
-		DrawDebugDirectionalArrow(GetWorld(), CaptureLocation, CaptureLocation + CaptureRotation.Vector() * 200, 20, FColor::Blue);
-		DrawDebugDirectionalArrow(GetWorld(), GetActorLocation(), GetActorLocation() + GetActorUpVector() * 300, 20, FColor::Green);
-		DrawDebugDirectionalArrow(GetWorld(), GetActorLocation(), GetActorLocation() + GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector()) * 100, 20, FColor::Red);
-	}
-
 	// set clip plane
 	// !!! This requires to enable global clip option in the project's settings
-	TargetCapture->ClipPlaneNormal = Target->GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector());
+	TargetCapture->ClipPlaneNormal = Target->GetActorForwardVector();
 	TargetCapture->ClipPlaneBase = Target->GetActorLocation();
-	TargetCapture->bEnableClipPlane = true;
 }
 
 void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult) {

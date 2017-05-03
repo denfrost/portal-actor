@@ -5,6 +5,8 @@
 #include "GameFramework/Actor.h"
 #include "Portal.generated.h"
 
+class UArrowComponent;
+
 UCLASS()
 class PORTALACTOR_API APortal: public AActor {
 	GENERATED_BODY()
@@ -15,6 +17,8 @@ public:
 
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+
+	FVector GetPortalCenter() const;
 
 protected:
 	// Called when the game starts or when spawned
@@ -45,6 +49,7 @@ private:
 	USceneCaptureComponent2D* TargetCapture = nullptr;
 	UMaterialInstanceDynamic* PortalMaterialInstance = nullptr;
 
+	bool CheckNeedToUpdate();
 	void UpdateCapture();
 
 	UFUNCTION()
@@ -60,6 +65,10 @@ private:
 	TSet<AActor*> TeleportedActors;
 	TSet<AActor*> ReceivedActors;
 
+	// Debug stuff
 	UPROPERTY(EditAnywhere, Category = "Portal")
 	bool bDebug = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Portal")
+	UArrowComponent* ForwardArrow;
 };
