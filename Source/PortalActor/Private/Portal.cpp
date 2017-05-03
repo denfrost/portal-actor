@@ -22,7 +22,6 @@ APortal::APortal() {
 
 	TargetCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(FName("TargetCapture"));
 	TargetCapture->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepWorld, true));
-	TargetCapture->bEnableClipPlane = true;
 
 	TeleportedActors = TSet<AActor*>();
 	ReceivedActors = TSet<AActor*>();
@@ -91,6 +90,7 @@ bool APortal::CheckNeedToUpdate() {
 
 // Big thanks to Redbox for this algorithm:
 // https://wiki.unrealengine.com/Simple_Portals
+// TODO: fix method for viewing portal through portal
 void APortal::UpdateCapture() {
 	if (!Target) {
 		return;
@@ -135,6 +135,7 @@ void APortal::UpdateCapture() {
 	// !!! This requires to enable global clip option in the project's settings
 	TargetCapture->ClipPlaneNormal = Target->GetActorForwardVector();
 	TargetCapture->ClipPlaneBase = Target->GetActorLocation();
+	TargetCapture->bEnableClipPlane = true;
 }
 
 void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult) {
@@ -145,6 +146,7 @@ void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* O
 	// Temporary add the Actor to a list, to avoid duplicate teleports (becaue of multiple BeginOverlap events)
 	SetCleanupTimer(OtherActor, &TeleportedActors);
 
+	// TODO: disable teleporting when overlapping from behind
 	Teleport(OtherActor);
 }
 
@@ -177,7 +179,7 @@ void APortal::Teleport(AActor* Actor) {
 	}
 
 	if (!Target) {
-		// TODO: Declare some default exit point for Portals without Target
+		// TODO: Allow to declare some default exit point for Portals without Target
 		return;
 	}
 
