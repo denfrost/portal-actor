@@ -5,6 +5,7 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "DrawDebugHelpers.h"
 #include "Components/ArrowComponent.h"
+#include "EngineUtils.h"
 #include "Portal.h"
 
 
@@ -45,19 +46,25 @@ void APortal::BeginPlay() {
 	TargetCapture->SetWorldLocation(Target->GetActorLocation());
 
 	if (ensure(PortalMaterial)) {
-		FVector2D ViewportSize;
-		GetWorld()->GetGameViewport()->GetViewportSize(ViewportSize);
+		Portal->SetMaterial(0, MakeRenderMaterial(TargetCapture));
 
-		UTextureRenderTarget2D* RenderTarget = NewObject<UTextureRenderTarget2D>(this);
-		RenderTarget->InitAutoFormat(ViewportSize.X, ViewportSize.Y);
-		RenderTarget->UpdateResourceImmediate(true);
-
-		PortalMaterialInstance = UMaterialInstanceDynamic::Create(PortalMaterial, this);
-		PortalMaterialInstance->SetTextureParameterValue(FName("Target"), RenderTarget);
-		Portal->SetMaterial(0, PortalMaterialInstance);
-
-		TargetCapture->TextureTarget = RenderTarget;
 	}
+}
+
+UMaterialInstanceDynamic* APortal::MakeRenderMaterial(USceneCaptureComponent2D* CaptureToUse) {
+	FVector2D ViewportSize;
+	GetWorld()->GetGameViewport()->GetViewportSize(ViewportSize);
+
+	UTextureRenderTarget2D* RenderTarget = NewObject<UTextureRenderTarget2D>(this);
+	RenderTarget->InitAutoFormat(ViewportSize.X, ViewportSize.Y);
+	RenderTarget->UpdateResourceImmediate(true);
+
+	CaptureToUse->TextureTarget = RenderTarget;
+
+	UMaterialInstanceDynamic* PortalMaterialInstance = UMaterialInstanceDynamic::Create(PortalMaterial, this);
+	PortalMaterialInstance->SetTextureParameterValue(FName("Target"), RenderTarget);
+
+	return PortalMaterialInstance;
 }
 
 // Called every frame
@@ -71,13 +78,21 @@ void APortal::Tick(float DeltaTime) {
 	UpdateCapture();
 }
 
-FVector APortal::GetPortalCenter() const {
-	return Portal->GetComponentLocation();
+USceneCaptureComponent2D* APortal::GetCaptureComponent() const {
+	return TargetCapture;
 }
 
-bool APortal::CheckNeedToUpdate() {
-	auto CameraLocation = GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetTransformComponent()->GetComponentLocation();
-	auto RelativeLocation = CameraLocation - GetActorLocation();
+TArray<UPrimitiveComponent*> APortal::GetPortalComponents(const APortal* Requester) const {
+	TArray<UPrimitiveComponent*> HiddenPortalComponents;
+	PortalMeshesMap.GenerateValueArray(HiddenPortalComponents);
+
+	HiddenPortalComponents.AddUnique(Portal);
+
+	return HiddenPortalComponents;
+}
+
+bool APortal::CheckNeedToUpdate(FVector ActorLocation) const {
+	auto RelativeLocation = ActorLocation - GetActorLocation();
 	
 	auto result = FVector::DotProduct(RelativeLocation, GetActorForwardVector());
 
@@ -96,46 +111,116 @@ void APortal::UpdateCapture() {
 		return;
 	}
 
-	if (!CheckNeedToUpdate()) {
+	auto PlayerCamera = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	auto CameraLocation = PlayerCamera->GetCameraLocation();
+
+	if (!CheckNeedToUpdate(CameraLocation)) {
 		return;
 	}
 
-	auto PlayerCamera = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
-	FTransform CameraTransform = PlayerCamera->GetTransformComponent()->GetComponentTransform();
-	FTransform SourceTransform = GetActorTransform();
-	FTransform TargetTransform = Target->GetActorTransform();
+	auto CaptureTransform = GetTeleportTransform(PlayerCamera->GetTransformComponent()->GetComponentTransform(), true);
 
-	FVector SourceScale = SourceTransform.GetScale3D();
-	FVector InverseScale = FVector(SourceScale.X * -1, SourceScale.Y * -1, SourceScale.Z);
-	FTransform InverseTransform = FTransform(SourceTransform.Rotator(), SourceTransform.GetLocation(), InverseScale);
+	TargetCapture->SetWorldLocationAndRotation(CaptureTransform.GetLocation(), CaptureTransform.GetRotation());
 
-	FVector CaptureLocation = TargetTransform.TransformPosition(InverseTransform.InverseTransformPosition(CameraTransform.GetLocation()));
-
-	FRotationMatrix R = FRotationMatrix(CameraTransform.Rotator());
-	FVector OUT_X;
-	FVector OUT_Y;
-	FVector OUT_Z;
-	R.GetScaledAxes(OUT_X, OUT_Y, OUT_Z);
-	
-	auto SourceByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_Y), FVector(1, 0, 0));
-	auto SourceByXY = FMath::GetReflectionVector(SourceByX, FVector(0, 1, 0));
-
-	auto DirectionY = TargetTransform.TransformVector(SourceByXY);
-
-	auto TargetByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_X), FVector(1, 0, 0));
-	auto TargetByXY = FMath::GetReflectionVector(TargetByX, FVector(0, 1, 0));
-
-	auto DirectionX = TargetTransform.TransformVector(TargetByXY);
-
-	auto CaptureRotation = FRotationMatrix::MakeFromXY(DirectionX, DirectionY).Rotator();
-
-	TargetCapture->SetWorldLocationAndRotation(CaptureLocation, CaptureRotation);
+	Target->UpdatePortalsInSight(this);
 
 	// set clip plane
 	// !!! This requires to enable global clip option in the project's settings
 	TargetCapture->ClipPlaneNormal = Target->GetActorForwardVector();
 	TargetCapture->ClipPlaneBase = Target->GetActorLocation();
 	TargetCapture->bEnableClipPlane = true;
+
+}
+
+void APortal::UpdatePortalsInSight(const APortal* Requester) const {
+	auto RequesterCapture = Requester->GetCaptureComponent();
+	RequesterCapture->HiddenComponents.Empty();
+
+	uint32 SkippedComponents = 0;
+	for (TActorIterator<APortal> ActorItr(GetWorld()); ActorItr; ++ActorItr) {
+		APortal* VisiblePortal = *ActorItr;
+
+		if (VisiblePortal == Requester) {
+			continue;
+		}
+
+		FVector PortalLocation = VisiblePortal->GetActorLocation();
+
+		if (!CheckNeedToUpdate(PortalLocation)) {
+			continue;
+		}
+
+		FHitResult HitResult;
+		FVector CaptureLocation = RequesterCapture->GetComponentLocation();
+		if (!GetWorld()->LineTraceSingleByChannel(HitResult, CaptureLocation, PortalLocation, ECollisionChannel::ECC_Camera)) {
+			continue;
+		}
+
+		auto VisiblePortalMesh = VisiblePortal->RenderForPortal(Requester);
+
+		auto HiddenPortalComponents = VisiblePortal->GetPortalComponents(Requester);
+		for (UPrimitiveComponent* HiddenPortalComponent : HiddenPortalComponents) {
+			if (HiddenPortalComponent->GetUniqueID() == VisiblePortalMesh->GetUniqueID()) {
+				SkippedComponents += 1;
+				if (Requester->bDebug) {
+					UE_LOG(LogTemp, Warning, TEXT("skipped: %s / %s"), *VisiblePortal->GetName(), *HiddenPortalComponent->GetName());
+				}
+				continue;
+			}
+
+			RequesterCapture->HiddenComponents.AddUnique(HiddenPortalComponent);
+		}
+	}
+
+	if (Requester->bDebug) {
+		UE_LOG(LogTemp, Warning, TEXT("Hidden components: %d, skipped: %d"), RequesterCapture->HiddenComponents.Num(), SkippedComponents);
+	}
+
+}
+
+UStaticMeshComponent* APortal::RenderForPortal(const APortal* Requester) {
+	if (!Requester) {
+		return nullptr;
+	}
+
+	if (Requester->bDebug) {
+		UE_LOG(LogTemp, Warning, TEXT("Render %s for %s"), *GetName(), *Requester->GetName());
+	}
+
+	USceneCaptureComponent2D* PortalCapture;
+	UStaticMeshComponent* PortalMesh;
+
+	uint32 RequesterID = Requester->GetUniqueID();
+	if (CapturesMap.Contains(RequesterID)) {
+		PortalCapture = CapturesMap[RequesterID];
+		PortalMesh = Cast<UStaticMeshComponent>(PortalMeshesMap[RequesterID]);
+	} else {
+		PortalCapture = NewObject<USceneCaptureComponent2D>(this);
+		PortalCapture->RegisterComponent();
+		PortalCapture->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepWorld, true));
+		CapturesMap.Add(RequesterID, PortalCapture);
+
+		PortalMesh = NewObject<UStaticMeshComponent>(this);
+		PortalMesh->RegisterComponent();
+		PortalMesh->AttachToComponent(RootComponent, FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
+		PortalMesh->SetStaticMesh(Portal->GetStaticMesh());
+		PortalMesh->SetRelativeTransform(Portal->GetRelativeTransform());
+		PortalMesh->SetMaterial(0, MakeRenderMaterial(PortalCapture));
+		//PortalMesh->SetMaterial(0, Portal->GetMaterial(0));
+		PortalMesh->SetHiddenInGame(false);
+		PortalMesh->SetVisibility(true);
+		
+		PortalMeshesMap.Add(RequesterID, PortalMesh);
+	}
+
+	auto CaptureTransform = GetTeleportTransform(Requester->GetCaptureComponent()->GetComponentTransform(), true);
+
+	PortalCapture->SetWorldLocationAndRotation(CaptureTransform.GetLocation(), CaptureTransform.GetRotation());
+	PortalCapture->ClipPlaneNormal = Target->GetActorForwardVector();
+	PortalCapture->ClipPlaneBase = Target->GetActorLocation();
+	PortalCapture->bEnableClipPlane = true;
+
+	return PortalMesh;
 }
 
 void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult) {
@@ -150,26 +235,36 @@ void APortal::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* O
 	Teleport(OtherActor);
 }
 
-FTransform APortal::GetTeleportTransform(AActor* Actor) const {
-	// Adjust relative rotation
-	auto PortalRotation = GetActorForwardVector().RotateAngleAxis(180, GetActorUpVector()).Rotation();
-	auto TargetRotation = Target->GetActorForwardVector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation();
-	auto PawnActor = Cast<APawn>(Actor);
-	FRotator DiffRotation;
-	if (IsValid(PawnActor)) {
-		auto Controller = PawnActor->GetController();
-		DiffRotation = Controller->GetControlRotation() - PortalRotation;
-	} else {
-		DiffRotation = Actor->GetActorRotation() - PortalRotation;
-		// TODO: fix actor's movement vector
-	}
+FTransform APortal::GetTeleportTransform(FTransform ActorTransform, bool bCaptureTransform) const {
+	FTransform SourceTransform = GetActorTransform();
+	FTransform TargetTransform = Target->GetActorTransform();
 
-	// Adjust relative location betwen a Portal and the Actor
-	auto DiffTargetRotation = TargetRotation - PortalRotation;
-	auto DiffVector = Actor->GetActorLocation() - GetActorLocation();
+	FVector SourceScale = SourceTransform.GetScale3D();
+	// TODO: fix it for bCaptureTransform == false (teleportation)
+	FVector InverseScale = FVector(SourceScale.X * bCaptureTransform ? -1 : 1, SourceScale.Y * -1, SourceScale.Z);
+	FTransform InverseTransform = FTransform(SourceTransform.Rotator(), SourceTransform.GetLocation(), InverseScale);
 
-	// TODO: fix teleportation when rotating not around Z axis
-	return FTransform((TargetRotation + DiffRotation).Vector().RotateAngleAxis(180, Target->GetActorUpVector()).Rotation(), Target->GetActorLocation() + DiffTargetRotation.RotateVector(DiffVector));
+	FVector CaptureLocation = TargetTransform.TransformPosition(InverseTransform.InverseTransformPosition(ActorTransform.GetLocation()));
+
+	FRotationMatrix R = FRotationMatrix(ActorTransform.Rotator());
+	FVector OUT_X;
+	FVector OUT_Y;
+	FVector OUT_Z;
+	R.GetScaledAxes(OUT_X, OUT_Y, OUT_Z);
+
+	auto SourceByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_Y), FVector(1, 0, 0));
+
+	auto SourceByXY = FMath::GetReflectionVector(SourceByX, FVector(0, 1, 0));
+	auto DirectionY = TargetTransform.TransformVector(SourceByXY);
+
+	auto TargetByX = FMath::GetReflectionVector(SourceTransform.InverseTransformVector(OUT_X), FVector(1, 0, 0));
+
+	auto TargetByXY = FMath::GetReflectionVector(TargetByX, FVector(0, 1, 0));
+	auto DirectionX = TargetTransform.TransformVector(TargetByXY);
+
+	auto CaptureRotation = FRotationMatrix::MakeFromXY(DirectionX, DirectionY).Rotator();
+
+	return FTransform(CaptureRotation, CaptureLocation);
 }
 
 void APortal::Teleport(AActor* Actor) {
@@ -184,7 +279,7 @@ void APortal::Teleport(AActor* Actor) {
 	}
 
 	Target->TeleportReceived(Actor);
-	auto Transform = GetTeleportTransform(Actor);
+	auto Transform = GetTeleportTransform(Actor->GetActorTransform());
 	Actor->SetActorLocation(Transform.GetLocation());
 
 	auto PawnActor = Cast<APawn>(Actor);

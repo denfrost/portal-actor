@@ -18,7 +18,11 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
-	FVector GetPortalCenter() const;
+	USceneCaptureComponent2D* GetCaptureComponent() const;
+	TArray<UPrimitiveComponent*> GetPortalComponents(const APortal* Requester) const;
+
+	void UpdatePortalsInSight(const APortal* Requester) const;
+	UStaticMeshComponent* RenderForPortal(const APortal* Requester);
 
 protected:
 	// Called when the game starts or when spawned
@@ -47,20 +51,23 @@ private:
 	APortal* Target = nullptr;
 
 	USceneCaptureComponent2D* TargetCapture = nullptr;
-	UMaterialInstanceDynamic* PortalMaterialInstance = nullptr;
+	UMaterialInstanceDynamic* MakeRenderMaterial(USceneCaptureComponent2D* CaptureToUse);
 
-	bool CheckNeedToUpdate();
+	bool CheckNeedToUpdate(FVector ActorLocation) const;
 	void UpdateCapture();
 
 	UFUNCTION()
 	void OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult);
 
-	FTransform GetTeleportTransform(AActor* Actor) const;
+	FTransform GetTeleportTransform(FTransform ActorTransform, bool bCaptureTransform = false) const;
 
 	void Teleport(AActor* Actor);
 	void TeleportReceived(AActor* ReceivedActor);
 
 	void SetCleanupTimer(AActor* ActorToCleanup, TSet<AActor*>* ActorsList);
+
+	TMap<uint32, USceneCaptureComponent2D*> CapturesMap;
+	TMap<uint32, UPrimitiveComponent*> PortalMeshesMap;
 
 	TSet<AActor*> TeleportedActors;
 	TSet<AActor*> ReceivedActors;
